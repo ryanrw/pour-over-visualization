@@ -1,19 +1,7 @@
 // Tests for simulate(). Run with: node --test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
-
-// Until the refactor: pull <script id="sim"> out of index.html and run it in a VM context.
-function loadSim() {
-  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  const src = html.match(/<script id="sim">([\s\S]*?)<\/script>/)[1];
-  const ctx = {};
-  vm.createContext(ctx);
-  vm.runInContext(src + '\nthis.simulate=simulate; this.shares=shares; this.COMP=COMP;', ctx);
-  return ctx;
-}
-const { simulate, shares, COMP } = loadSim();
+import { simulate, shares, COMP } from '../src/sim.js';
 
 const BASE = { dripper: 'v60', filter: 'v60', pours: 3, grind: 'medium', temp: 90, bloom: 2, ratio: 15, process: 'natural' };
 const run = (over = {}) => simulate({ ...BASE, ...over });
@@ -25,7 +13,7 @@ test('default → EY ~19%, total time ~2:30', () => {
   const R = run();
   close(R.EY, 19, 0.5, 'EY');
   close(R.totalTime, 150, 10, 'totalTime (s)');
-  assert.deepEqual([...R.steps.map(s => s.kind)], ['bloom', 'pour', 'pour', 'drawdown']);
+  assert.deepEqual(R.steps.map(s => s.kind), ['bloom', 'pour', 'pour', 'drawdown']);
 });
 
 test('fine grind + 94 °C → EY ~22–23%, astringent/burnt shares go up', () => {
@@ -66,8 +54,8 @@ test('ratio 1:5 → low EY, high TDS', () => {
 
 test('pours = 1 → single step + drawdown', () => {
   const R = run({ pours: 1 });
-  assert.deepEqual([...R.steps.map(s => s.kind)], ['single', 'drawdown']);
-  assert.deepEqual([...R.pours], [225]);
+  assert.deepEqual(R.steps.map(s => s.kind), ['single', 'drawdown']);
+  assert.deepEqual(R.pours, [225]);
 });
 
 // ---------- invariants ----------
@@ -96,7 +84,7 @@ test('steps tile the frames with no gaps', () => {
 test('shares sum to 1', () => {
   const s = shares(run().cup);
   close(s.reduce((a, b) => a + b, 0), 1, 1e-12, 'sum');
-  assert.deepEqual([...shares([0, 0, 0, 0, 0])], [0, 0, 0, 0, 0]);
+  assert.deepEqual(shares([0, 0, 0, 0, 0]), [0, 0, 0, 0, 0]);
 });
 
 // ---------- golden numbers (locks current behaviour for the refactor) ----------
