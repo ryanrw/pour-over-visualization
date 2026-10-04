@@ -10,7 +10,7 @@ const fmtG=v=>(Math.round(v*10)/10).toString().replace(/\.0$/,'');
 // ---------- state ----------
 const state={dripper:'v60',filter:'v60',pours:3,grind:'medium',temp:90,bloom:2,ratio:15,process:'natural'};
 let R;
-let step=0, progress=0, playing=!reduceMotion, playAll=false, speed=1;
+let step=0, progress=0, playing=false, playAll=false, speed=1;
 
 let last=performance.now(), hudT=0;
 function loop(now){
@@ -161,12 +161,15 @@ function renderControls(){
   });
 }
 
-function rebuild(){
+// First load waits for the play overlay; later rebuilds (control changes) start the first step right away.
+function rebuild(first){
   R=simulate(state); load(R,state);
-  step=0; progress=0; playing=!reduceMotion; playAll=false; lastCupKey='';
+  step=0; progress=0; playing=!first&&!reduceMotion; playAll=false; lastCupKey='';
   renderControls(); renderTimeline(); renderResult(); renderRecipe(); onStep(true); updatePlay();
 }
-function updatePlay(){ $('play').textContent=(playing&&playAll)?'หยุด':(step===R.steps.length-1&&progress>=1?'เล่นทั้งหมดใหม่':'เล่นทั้งหมด'); }
+function updatePlay(){ $('play').textContent=(playing&&playAll)?'หยุด':(step===R.steps.length-1&&progress>=1?'เล่นทั้งหมดใหม่':'เล่นทั้งหมด');
+  $('playover').hidden=playing||progress>0; }
+$('playover').onclick=()=>{ playing=true; playAll=false; updatePlay(); };
 $('play').onclick=()=>{
   if(playing&&playAll){ playing=false; playAll=false; updatePlay(); return; }
   if(playing){ playAll=true; updatePlay(); return; }
@@ -181,5 +184,5 @@ document.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT'||e.target
 window.addEventListener('resize',resize);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',readTheme);
 
-readTheme(); resize(); renderLegend(); rebuild(); requestAnimationFrame(loop);
+readTheme(); resize(); renderLegend(); rebuild(true); requestAnimationFrame(loop);
 if(document.fonts) document.fonts.ready.then(()=>{});
