@@ -9,7 +9,8 @@ Static web app (no build step) showing a 2.5D cutaway of a pour-over dripper fro
 - No build step. Push to `main` → Vercel serves `index.html` + `src/` as static files.
 
 ## Structure
-- `index.html`: markup only. Loads `src/style.css` and `src/ui.js` (ES module).
+- `index.html`: markup only. Loads `src/style.css` and `src/ui.js` (ES module). Head has description, favicon, and Open Graph / Twitter card meta (absolute URLs to the prod domain).
+- `assets/`: `favicon.svg` (coffee cup) with PNG fallbacks (`favicon-32.png`, `apple-touch-icon.png`), and `og-image.png` (1200×630 link preview: title + a mid-pour capture of the canvas). The preview is a static screenshot; regenerate it if the scene's look changes a lot.
 - `src/style.css`: theme tokens on `:root` (light + dark via `prefers-color-scheme` / `data-theme`). Fonts: Anuphan (body), Chakra Petch (headings/numbers) from Google Fonts.
 - `src/sim.js`: pure simulation, no DOM. Exports `DOSE`, the config tables, `simulate`, `shares`.
   - `COMP`: 5 compounds with rate `k`, temp sensitivity `sens`, soluble mass `S`, color.
