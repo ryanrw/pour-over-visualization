@@ -23,6 +23,7 @@ Static web app (no build step) showing a 2.5D cutaway of a pour-over dripper fro
   - Effects: compound "wisps", CO₂ bubbles in bloom, drips, ripples, kettle stream.
   - Server shows stacked layers per step (intentionally unmixed for teaching).
 - `src/ui.js`: UI state (`state`), controls, timeline, panel text (`narrate`, `verdict`), HUD, and the `requestAnimationFrame` loop.
+  - Phone-width screens (≤640 px) get a one-time `<dialog>` suggesting a tablet or computer; dismissal is stored in localStorage (`mobileHintSeen`).
   - Playback: nothing plays on load or after a control change; a play overlay over the scene waits for a click. The overlay plays all steps from the start (`playAll`), and the "เล่นทั้งหมด" button follows that state ("หยุด" while running). Prev/next/timeline play one step then stop. Whenever playback rests at a step boundary the overlay returns as "เล่นใหม่ตั้งแต่ต้น" (hidden while paused mid-step). Step duration `animDur = clamp(simSeconds/3.5, 8, 26)` real seconds at 1×.
 
 ## Decisions to keep

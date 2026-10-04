@@ -182,10 +182,19 @@ $('play').onclick=()=>{
 $('prev').onclick=()=>{ if(step>0){ step--; progress=0; playing=true; playAll=false; updatePlay(); onStep(true);} };
 $('next').onclick=()=>{ if(step<R.steps.length-1){ step++; progress=0; playing=true; playAll=false; updatePlay(); onStep(true);} };
 $('speed').onchange=e=>{ speed=+e.target.value; };
-document.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
+document.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||$('mobileHint').open) return;
   if(e.key==='ArrowRight') $('next').click(); else if(e.key==='ArrowLeft') $('prev').click(); else if(e.key===' '){ e.preventDefault(); $('play').click(); } });
 window.addEventListener('resize',resize);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',readTheme);
 
-readTheme(); resize(); renderLegend(); rebuild(); requestAnimationFrame(loop);
+// Phone-sized screens: suggest a tablet or computer once (dismissal remembered per device).
+const HINT_KEY='mobileHintSeen';
+function showMobileHint(){
+  if(!matchMedia('(max-width: 640px)').matches) return;
+  try{ if(localStorage.getItem(HINT_KEY)) return; }catch(e){}
+  const d=$('mobileHint'); d.addEventListener('close',()=>{ try{ localStorage.setItem(HINT_KEY,'1'); }catch(e){} },{once:true});
+  d.showModal();
+}
+
+readTheme(); resize(); renderLegend(); rebuild(); showMobileHint(); requestAnimationFrame(loop);
 if(document.fonts) document.fonts.ready.then(()=>{});
