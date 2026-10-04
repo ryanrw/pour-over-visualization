@@ -161,15 +161,18 @@ function renderControls(){
   });
 }
 
-// First load waits for the play overlay; later rebuilds (control changes) start the first step right away.
-function rebuild(first){
+// Every rebuild (first load, control change) waits on the play overlay.
+function rebuild(){
   R=simulate(state); load(R,state);
-  step=0; progress=0; playing=!first&&!reduceMotion; playAll=false; lastCupKey='';
+  step=0; progress=0; playing=false; playAll=false; lastCupKey='';
   renderControls(); renderTimeline(); renderResult(); renderRecipe(); onStep(true); updatePlay();
 }
 function updatePlay(){ $('play').textContent=(playing&&playAll)?'หยุด':(step===R.steps.length-1&&progress>=1?'เล่นทั้งหมดใหม่':'เล่นทั้งหมด');
-  $('playover').hidden=playing||progress>0; }
-$('playover').onclick=()=>{ playing=true; playAll=false; updatePlay(); };
+  // Overlay shows whenever playback rests at a step boundary (not when paused mid-step).
+  $('playover').hidden=playing||(progress>0&&progress<1);
+  $('playover').querySelector('.pl').textContent=(step===0&&progress===0)?'กดเพื่อเริ่มดูการดริป':'เล่นใหม่ตั้งแต่ต้น'; }
+// Overlay plays every step from the start; prev/next/timeline play one step and stop.
+$('playover').onclick=()=>{ step=0; progress=0; playing=true; playAll=true; onStep(true); updatePlay(); };
 $('play').onclick=()=>{
   if(playing&&playAll){ playing=false; playAll=false; updatePlay(); return; }
   if(playing){ playAll=true; updatePlay(); return; }
@@ -184,5 +187,5 @@ document.addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT'||e.target
 window.addEventListener('resize',resize);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',readTheme);
 
-readTheme(); resize(); renderLegend(); rebuild(true); requestAnimationFrame(loop);
+readTheme(); resize(); renderLegend(); rebuild(); requestAnimationFrame(loop);
 if(document.fonts) document.fonts.ready.then(()=>{});

@@ -23,7 +23,7 @@ Static web app (no build step) showing a 2.5D cutaway of a pour-over dripper fro
   - Effects: compound "wisps", CO₂ bubbles in bloom, drips, ripples, kettle stream.
   - Server shows stacked layers per step (intentionally unmixed for teaching).
 - `src/ui.js`: UI state (`state`), controls, timeline, panel text (`narrate`, `verdict`), HUD, and the `requestAnimationFrame` loop.
-  - Playback: default is step-by-step (prev/next/timeline plays one step then stops). "เล่นทั้งหมด" (`playAll`) runs through to the end. Step duration `animDur = clamp(simSeconds/3.5, 8, 26)` real seconds at 1×.
+  - Playback: nothing plays on load or after a control change; a play overlay over the scene waits for a click. The overlay plays all steps from the start (`playAll`), and the "เล่นทั้งหมด" button follows that state ("หยุด" while running). Prev/next/timeline play one step then stop. Whenever playback rests at a step boundary the overlay returns as "เล่นใหม่ตั้งแต่ต้น" (hidden while paused mid-step). Step duration `animDur = clamp(simSeconds/3.5, 8, 26)` real seconds at 1×.
 
 ## Decisions to keep
 - Dose fixed at 15 g. Ratio options 1:5, 1:10, 1:15, 1:20.
@@ -43,7 +43,7 @@ Static web app (no build step) showing a 2.5D cutaway of a pour-over dripper fro
 - Physics/extraction constants live in the config tables at the top of `sim.js`. Change them there, not inline.
 - When changing model behavior, state which reference numbers move and why.
 - UI copy is Thai. Keep new UI text in Thai and consistent with existing wording.
-- Don't reintroduce auto-advance as the default: step-by-step is intentional.
+- Don't auto-play on load or on control changes: the user starts playback from the overlay. Picking a single step (prev/next/timeline) must stop at the end of that step.
 
 ## Testing
 - Reference configs (default = V60 dripper, V60 filter, 3 pours, medium, 90 °C, bloom 2×, 1:15, natural):
