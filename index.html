@@ -62,381 +62,17 @@
 
 <script type="module">
 import { DOSE, COMP, DRIPPERS, FILTERS, GRIND, PROCESS, simulate, shares } from './src/sim.js';
+import { mix, rgba, clamp, reduceMotion, hueOf, load, frameAt, readTheme, resize, updateParticles, snapParticles, spawnFx, stepFx, draw, stepShort } from './src/render.js';
 
 // ---------- helpers ----------
 const $=id=>document.getElementById(id);
-const hex=h=>{h=h.replace('#','');return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];};
-const mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
-const rgba=(c,a)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const CRGB=COMP.map(c=>hex(c.color));
 const fmtT=s=>{s=Math.max(0,Math.round(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
 const fmtG=v=>(Math.round(v*10)/10).toString().replace(/\.0$/,'');
-const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-function hueOf(arr){ // colour of an extract, weighted by perceived intensity
-  const sh=shares(arr); let m=[0,0,0]; sh.forEach((v,i)=>{m=m.map((x,j)=>x+CRGB[i][j]*v);});
-  return m;
-}
-function liquor(arr,conc){ // colour of liquid
-  const h=hueOf(arr); const brown=[96,58,32];
-  const base=mix(h,brown,0.3);
-  return mix([214,196,160],base,clamp(0.35+conc,0.35,1));
-}
 
 // ---------- state ----------
 const state={dripper:'v60',filter:'v60',pours:3,grind:'medium',temp:90,bloom:2,ratio:15,process:'natural'};
-let R, geom, parts=[], wisps=[], bubbles=[], drops=[], ripples=[];
+let R;
 let step=0, progress=0, playing=!reduceMotion, playAll=false, speed=1;
-
-// ---------- geometry ----------
-function makeGeom(){
-  const D=DRIPPERS[state.dripper], F=FILTERS[state.filter];
-  const g={cx:215, baseY:262, H:D.H, tan:D.tan, b:F.b, t:D.t, D, F};
-  g.w=y=>g.b+clamp(y,0,g.H+12)*g.tan;
-  const N=g.H+12; const vol=[0];
-  for(let i=1;i<=N;i++){ const w=g.w(i-0.5); vol.push(vol[i-1]+Math.PI*w*w); }
-  g.mlPer=320/vol[g.H];
-  g.volToH=ml=>{ const v=ml/g.mlPer; if(v>=vol[N]) return N; let lo=0,hi=N; while(hi-lo>1){const m=(lo+hi)>>1; if(vol[m]<v) lo=m; else hi=m;} return lo+(v-vol[lo])/Math.max(1e-9,vol[hi]-vol[lo]); };
-  g.bedML=DOSE*2.2; g.bedH=g.volToH(g.bedML);
-  g.rimY=g.baseY-g.H;
-  return g;
-}
-function genParticles(){
-  const G=GRIND[state.grind]; parts=[];
-  const add=(type,n)=>{ for(let i=0;i<n;i++){
-    const rad = type==='fine' ? 1.05+Math.random()*0.55 : G.mainR*(0.75+Math.random()*0.5);
-    const y = clamp(geom.volToH(Math.random()*geom.bedML), rad*0.7, geom.bedH);
-    const w = geom.w(y); const r=Math.max(0,(w-rad-1))*Math.sqrt(Math.random()); const th=Math.random()*Math.PI*2;
-    parts.push({type,rad,rest:{y,r,th},y,r,th,seed:Math.random()});
-  }};
-  add('main',G.nMain); add('fine',G.nFine);
-}
-
-// ---------- frame interpolation ----------
-function frameAt(si,p){
-  const st=R.steps[si]; const fi=st.f0+(st.f1-st.f0)*p;
-  const i0=Math.floor(fi), i1=Math.min(st.f1,i0+1), u=fi-i0;
-  const a=R.frames[i0], b=R.frames[i1];
-  const L=k=>a[k]+(b[k]-a[k])*u, LA=k=>a[k].map((v,j)=>v+(b[k][j]-v)*u);
-  const F={t:L('t'),free:L('free'),abs:L('abs'),drained:L('drained'),poured:L('poured'),agit:L('agit'),mig:L('mig'),q:L('q'),
-    pouring:a.pouring&&b.pouring, valveOpen:(u<0.5?a:b).valveOpen, cup:LA('cup'), liq:LA('liq'), Em:LA('Em'), Ef:LA('Ef'), rm:b.rm, rf:b.rf, st, si, p};
-  F.dome=(st.kind==='bloom'||st.kind==='single') ? Math.min(1,F.abs/(DOSE*2))*(1-0.55*p) : 0;
-  F.surfH = F.abs>0.05 ? Math.max(geom.bedH, geom.volToH(geom.bedML+F.free)) : geom.bedH;
-  F.wet = Math.min(1,F.abs/(DOSE*2));
-  return F;
-}
-
-// ---------- canvas ----------
-const cv=$('cv'), ctx=cv.getContext('2d');
-const VW=470, VH=520; let dpr=1, sc=1, ox=0, oy=0, cssW=0, cssH=0;
-let ink='#1c2421', muted='#5d6a65';
-function readTheme(){ const cs=getComputedStyle(document.documentElement); ink=cs.getPropertyValue('--ink').trim()||ink; muted=cs.getPropertyValue('--muted').trim()||muted; }
-function resize(){
-  const r=cv.parentElement.getBoundingClientRect(); dpr=window.devicePixelRatio||1; cssW=r.width; cssH=r.height;
-  cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
-  sc=Math.min(cssW/VW, cssH/VH)*0.98; ox=(cssW-VW*sc)/2; oy=(cssH-VH*sc)/2+4;
-}
-const proj=(r,th,y)=>[geom.cx+r*Math.cos(th), geom.baseY-y+r*Math.sin(th)*0.3];
-
-function bodyColors(){
-  switch(geom.D.style){
-    case 'switch': return {fill:[212,232,240], a:0.35, stroke:[120,160,178], inner:[190,214,224]};
-    case 'origami': return {fill:[232,170,160], a:1, stroke:[196,128,118], inner:[210,146,136]};
-    case 'ufo': return {fill:[236,229,217], a:1, stroke:[190,178,160], inner:[214,204,188]};
-    case 'ct62': return {fill:[92,88,86], a:1, stroke:[60,57,55], inner:[74,70,68]};
-    default: return {fill:[246,244,240], a:1, stroke:[196,190,182], inner:[222,217,209]};
-  }
-}
-
-function drawDripperBack(F){
-  const g=geom, cx=g.cx, by=g.baseY, H=g.H, rimY=g.rimY, t=g.t;
-  const wO=y=>g.w(y)+t, wI=y=>g.w(y);
-  const bc=bodyColors();
-  // outer shell (back half + side walls)
-  ctx.beginPath();
-  ctx.moveTo(cx-wO(0),by+3); ctx.lineTo(cx-wO(H),rimY);
-  ctx.ellipse(cx,rimY,wO(H),wO(H)*0.3,0,Math.PI,2*Math.PI);
-  ctx.lineTo(cx+wO(0),by+3);
-  ctx.ellipse(cx,by+3,wO(0),wO(0)*0.3,0,0,Math.PI);
-  ctx.closePath();
-  const gr=ctx.createLinearGradient(cx-wO(H),0,cx+wO(H),0);
-  gr.addColorStop(0,rgba(mix(bc.fill,[0,0,0],0.18),bc.a)); gr.addColorStop(0.35,rgba(bc.fill,bc.a)); gr.addColorStop(1,rgba(mix(bc.fill,[0,0,0],0.28),bc.a));
-  ctx.fillStyle=gr; ctx.fill(); ctx.strokeStyle=rgba(bc.stroke,0.9); ctx.lineWidth=1.2; ctx.stroke();
-  if(g.D.style==='origami'){ // pleats on the side walls
-    ctx.strokeStyle=rgba(bc.stroke,0.8); ctx.lineWidth=1;
-    for(let k=0;k<9;k++){ const y=H*(k+0.5)/9; for(const s of [-1,1]){ ctx.beginPath(); ctx.moveTo(cx+s*wI(y),by-y); ctx.lineTo(cx+s*(wO(y)+3),by-y-4); ctx.lineTo(cx+s*wI(y),by-y-8); ctx.stroke(); } }
-  }
-  // inner back surface
-  ctx.beginPath();
-  ctx.moveTo(cx-wI(0),by); ctx.lineTo(cx-wI(H),rimY);
-  ctx.ellipse(cx,rimY,wI(H),wI(H)*0.3,0,Math.PI,2*Math.PI);
-  ctx.lineTo(cx+wI(0),by); ctx.ellipse(cx,by,Math.max(1,wI(0)),Math.max(1,wI(0))*0.3,0,0,Math.PI); ctx.closePath();
-  ctx.fillStyle=rgba(bc.inner, Math.max(0.6,bc.a)); ctx.fill();
-  // paper filter
-  const pt=6, pw=y=>wI(y)-1.5;
-  ctx.beginPath();
-  ctx.moveTo(cx-pw(0),by-1); ctx.lineTo(cx-pw(H+pt),rimY-pt);
-  ctx.ellipse(cx,rimY-pt,pw(H+pt),pw(H+pt)*0.3,0,Math.PI,2*Math.PI);
-  ctx.lineTo(cx+pw(0),by-1); ctx.ellipse(cx,by-1,Math.max(1,pw(0)),Math.max(1,pw(0))*0.3,0,0,Math.PI); ctx.closePath();
-  const pg=ctx.createLinearGradient(0,rimY,0,by);
-  const wetTop=by-F.surfH;
-  pg.addColorStop(0,'#f1e6d1'); pg.addColorStop(clamp((wetTop-rimY)/(by-rimY),0,1),'#eadcc2'); pg.addColorStop(1,F.wet>0?'#c9b28f':'#e6d7bb');
-  ctx.fillStyle=pg; ctx.fill();
-  ctx.strokeStyle='rgba(160,140,110,.55)'; ctx.lineWidth=0.8;
-  if(state.filter==='kalita'){ // wave folds
-    for(let k=-6;k<=6;k++){ const f=k/6.5; ctx.beginPath(); for(let y=0;y<=H+pt;y+=4){ const x=cx+f*pw(y)*0.98+Math.sin(y*0.5+k)*1.2; const yy=by-y-Math.sqrt(Math.max(0,1-f*f))*pw(y)*0.3; y===0?ctx.moveTo(x,yy):ctx.lineTo(x,yy);} ctx.stroke(); }
-  } else {
-    ctx.beginPath(); ctx.moveTo(cx-pw(0)+1,by-2); ctx.lineTo(cx-pw(H+pt)*0.55,rimY-pt-pw(H+pt)*0.25); ctx.stroke(); // seam
-  }
-}
-
-function drawDripperFront(F){
-  const g=geom, cx=g.cx, by=g.baseY, H=g.H, rimY=g.rimY, t=g.t;
-  const wO=y=>g.w(y)+t, wI=y=>g.w(y);
-  const bc=bodyColors();
-  // rim ring (front half)
-  ctx.beginPath();
-  ctx.ellipse(cx,rimY,wO(H),wO(H)*0.3,0,Math.PI,0,true);
-  ctx.ellipse(cx,rimY,wI(H),wI(H)*0.3,0,0,Math.PI,false);
-  ctx.closePath(); ctx.fillStyle=rgba(mix(bc.fill,[255,255,255],0.1),Math.max(0.55,bc.a)); ctx.fill();
-  ctx.strokeStyle=rgba(bc.stroke,1); ctx.lineWidth=1.2; ctx.stroke();
-  // paper lip
-  ctx.beginPath(); ctx.ellipse(cx,rimY-6,wI(H+6)-1.5,(wI(H+6)-1.5)*0.3,0,0,Math.PI); ctx.strokeStyle='rgba(200,180,150,.8)'; ctx.lineWidth=1; ctx.stroke();
-  // cut edge highlight
-  ctx.strokeStyle=rgba(bc.stroke,0.9); ctx.lineWidth=1.2;
-  for(const s of [-1,1]){ ctx.beginPath(); ctx.moveTo(cx+s*wI(0),by); ctx.lineTo(cx+s*wI(H),rimY); ctx.stroke(); }
-  // base / neck
-  const nw=Math.max(10,wO(0)+4);
-  const isSwitchBase = g.D.valve;
-  const baseCol = isSwitchBase ? (g.D.style==='switch'?[40,40,42]:(g.D.style==='ct62'?[60,58,56]:[70,66,62])) : mix(bc.fill,[0,0,0],0.08);
-  ctx.fillStyle=rgba(baseCol,1); ctx.strokeStyle=rgba(mix(baseCol,[0,0,0],0.3),1);
-  ctx.beginPath(); ctx.rect(cx-nw,by+2,nw*2,18); ctx.fill(); ctx.stroke();
-  const fw=Math.min(wO(H)*0.85, g.D.style==='ufo'?105:92);
-  ctx.beginPath(); ctx.ellipse(cx,by+24,fw,7,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  ctx.fillRect(cx-fw,by+24,fw*2,4);
-  ctx.beginPath(); ctx.ellipse(cx,by+28,fw,7,0,0,Math.PI); ctx.fill(); ctx.stroke();
-  // outlet
-  ctx.fillStyle=rgba(mix(baseCol,[0,0,0],0.4),1); ctx.fillRect(cx-4,by+30,8,7);
-  if(isSwitchBase){
-    const open=F.valveOpen;
-    ctx.fillStyle=rgba(mix(baseCol,[255,255,255],0.15),1);
-    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx+nw-2,by+6,24,8,3) : ctx.rect(cx+nw-2,by+6,24,8); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx+nw+24,by+10,5,0,Math.PI*2); ctx.fillStyle=open?'#3ea26a':'#d0453c'; ctx.fill();
-    ctx.font='600 10px "Chakra Petch", sans-serif'; ctx.fillStyle=ink; ctx.textAlign='left';
-    ctx.fillText(open?'วาล์วเปิด':'วาล์วปิด', cx+nw+33, by+14);
-  }
-}
-
-function drawWaterBody(F){
-  if(F.abs<=0.05) return;
-  const g=geom, cx=g.cx, by=g.baseY, h=F.surfH;
-  const conc=clamp((F.liq.reduce((a,b)=>a+b,0))/(F.free+F.abs+1)*6,0,1);
-  const col=liquor(F.liq,conc);
-  const wI=y=>g.w(y)-1.5;
-  // wet bed zone
-  const bedTop=Math.min(h, g.bedH*(1+F.dome*0.14));
-  ctx.beginPath(); ctx.moveTo(cx-wI(0),by); ctx.lineTo(cx-wI(bedTop),by-bedTop);
-  ctx.ellipse(cx,by-bedTop,wI(bedTop),wI(bedTop)*0.3,0,Math.PI,0,true);
-  ctx.lineTo(cx+wI(0),by); ctx.closePath();
-  const dep=(F.Em[1]*0.6+F.Em[0]*0.2);
-  ctx.fillStyle=rgba(mix([58,36,22],[120,92,66],dep*0.6),0.55*F.wet+0.1); ctx.fill();
-  if(F.free<0.3) return;
-  ctx.beginPath(); ctx.moveTo(cx-wI(0),by); ctx.lineTo(cx-wI(h),by-h);
-  ctx.ellipse(cx,by-h,wI(h),wI(h)*0.3,0,Math.PI,0,true);
-  ctx.lineTo(cx+wI(0),by); ctx.closePath();
-  const wg=ctx.createLinearGradient(0,by-h,0,by);
-  wg.addColorStop(0,rgba(col,0.28)); wg.addColorStop(1,rgba(col,0.5));
-  ctx.fillStyle=wg; ctx.fill();
-}
-function drawWaterSurface(F,now){
-  if(F.free<0.3||F.abs<=0.05) return;
-  const g=geom, cx=g.cx, by=g.baseY, h=F.surfH, w=g.w(h)-1.5;
-  const conc=clamp((F.liq.reduce((a,b)=>a+b,0))/(F.free+F.abs+1)*6,0,1);
-  const col=liquor(F.liq,conc);
-  ctx.beginPath(); ctx.ellipse(cx,by-h,w,w*0.3,0,0,Math.PI*2);
-  ctx.fillStyle=rgba(mix(col,[255,255,255],0.15),0.38); ctx.fill();
-  ctx.strokeStyle=rgba(mix(col,[255,255,255],0.5),0.7); ctx.lineWidth=1; ctx.stroke();
-  // ripples
-  for(const rp of ripples){ const a=1-rp.age/rp.life; if(a<=0) continue; const rr=Math.min(w*0.95,4+rp.age*40);
-    ctx.beginPath(); ctx.ellipse(rp.x,rp.y,rr,rr*0.3,0,0,Math.PI*2); ctx.strokeStyle=`rgba(255,255,255,${0.5*a})`; ctx.stroke(); }
-  // foam crema during bloom
-  if(F.dome>0.05){ ctx.beginPath(); ctx.ellipse(cx,by-h,w*0.85,w*0.25,0,0,Math.PI*2); ctx.fillStyle=`rgba(196,150,100,${0.35*F.dome})`; ctx.fill(); }
-}
-
-function updateParticles(F,dt){
-  const surf=F.surfH, wetAny=F.abs>0.05, bedTop=geom.bedH*(1+F.dome*0.14);
-  for(const p of parts){
-    const fine=p.type==='fine';
-    let ty=p.rest.y*(1+F.dome*0.14), tr=p.rest.r;
-    if(fine){ ty=ty*(1-0.8*F.mig)+p.rad; tr=tr*(1-0.35*F.mig); }
-    const A=wetAny ? F.agit*(fine?30:16)*(F.pouring?1:0.3) : 0;
-    if(A>0.05){
-      const w=geom.w(p.y), rN=Math.min(1,p.r/Math.max(w,1)), yN=p.y/Math.max(surf,1);
-      p.y += A*(2*rN-1)*dt*1.2;
-      p.r += -A*(yN-0.45)*dt;
-      p.th += (A*0.7/Math.max(p.r,6))*dt;
-      p.y += (Math.random()-0.5)*A*dt*2.5; p.r += (Math.random()-0.5)*A*dt*1.5;
-    }
-    const ks=clamp((fine?1.0:2.0)*(1-Math.min(0.92,F.agit*(F.pouring?1:0.35)))*dt,0,1);
-    p.y+=(ty-p.y)*ks; p.r+=(tr-p.r)*ks;
-    const maxY = wetAny ? Math.max(bedTop, surf-p.rad) : bedTop;
-    p.y=clamp(p.y,p.rad*0.6,maxY);
-    const w=geom.w(p.y); p.r=clamp(p.r,0,Math.max(0,w-p.rad-1.5));
-  }
-}
-function snapParticles(F){
-  for(const p of parts){ let ty=p.rest.y*(1+F.dome*0.14), tr=p.rest.r;
-    if(p.type==='fine'){ ty=ty*(1-0.8*F.mig)+p.rad; tr=tr*(1-0.35*F.mig);} p.y=Math.min(ty,geom.bedH*1.15); p.r=Math.min(tr,Math.max(0,geom.w(p.y)-p.rad-1.5)); }
-  wisps=[]; bubbles=[]; drops=[]; ripples=[];
-}
-function pickComp(rv){ const s=rv.reduce((a,b)=>a+b,0); if(s<=0) return -1; let x=Math.random()*s; for(let i=0;i<5;i++){ x-=rv[i]; if(x<=0) return i; } return 4; }
-
-function drawParticles(F){
-  const wetAny=F.abs>0.05;
-  const arr=parts.map(p=>({p,z:p.r*Math.sin(p.th)})).sort((a,b)=>a.z-b.z);
-  const rmS=F.rm.reduce((a,b)=>a+b,0), rfS=F.rf.reduce((a,b)=>a+b,0);
-  const gm=clamp(rmS/R.maxRate*2.2,0,1), gf=clamp(rfS/R.maxRate*3.2,0,1);
-  const dm=F.Em[1]*0.55+F.Em[0]*0.15+F.Em[2]*0.3, df=F.Ef[1]*0.55+F.Ef[0]*0.15+F.Ef[2]*0.3;
-  let domM=-1,domF=-1,bm=0,bf=0; for(let i=0;i<5;i++){ if(F.rm[i]>bm){bm=F.rm[i];domM=i;} if(F.rf[i]>bf){bf=F.rf[i];domF=i;} }
-  for(const {p,z} of arr){
-    const [x,y]=proj(p.r,p.th,p.y); const fine=p.type==='fine';
-    const depth=1+z/260; const rad=p.rad*depth;
-    let c;
-    if(!wetAny) c = fine? [120,84,56]:[142,102,68];
-    else if(fine) c = mix([50,31,20],[132,104,78],df*0.7);
-    else c = mix([76,46,28],[160,128,96],dm*0.75);
-    c=mix(c,[0,0,0],clamp(-z/300,0,0.25));
-    ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2); ctx.fillStyle=rgba(c,1); ctx.fill();
-    const dom = fine?domF:domM, gl = fine?gf:gm;
-    if(wetAny && dom>=0 && gl>0.05 && (p.seed<0.35+gl*0.6)){
-      ctx.lineWidth=fine?1:1.4; ctx.strokeStyle=rgba(CRGB[dom],Math.min(0.95,0.25+gl*0.75)); ctx.stroke();
-    }
-  }
-}
-
-function spawnFx(F,dt,now){
-  const wetAny=F.abs>0.05; const g=geom;
-  // wisps (dissolving compounds)
-  if(wetAny && !reduceMotion){
-    const tot=(F.rm.reduce((a,b)=>a+b,0)+F.rf.reduce((a,b)=>a+b,0))/R.maxRate;
-    let n=tot*70*dt*speed; while(n>0){ if(Math.random()<n){
-      const useF=Math.random()<F.rf.reduce((a,b)=>a+b,0)/Math.max(1e-9,F.rm.reduce((a,b)=>a+b,0)+F.rf.reduce((a,b)=>a+b,0));
-      const pool=parts.filter(p=>(p.type==='fine')===useF); const p=pool[(Math.random()*pool.length)|0]; if(!p) break;
-      const ci=pickComp(useF?F.rf:F.rm); if(ci<0) break;
-      const [x,y]=proj(p.r,p.th,p.y);
-      wisps.push({x,y,vx:(Math.random()-0.5)*8,vy:-6-Math.random()*10,life:1.1+Math.random()*0.6,age:0,c:ci,r:1.5+Math.random()*2});
-    } n-=1; }
-  }
-  // CO2 bubbles during bloom
-  if(F.dome>0.08 && !reduceMotion){
-    let n=F.dome*28*dt*speed; while(n>0){ if(Math.random()<n){ const p=parts[(Math.random()*parts.length)|0];
-      bubbles.push({r:p.r,th:p.th,y:p.y,rad:1+Math.random()*2.2,v:18+Math.random()*20,life:3}); } n-=1; }
-  }
-  // drops to server
-  if(F.q>0.05 && F.valveOpen){
-    const rate=F.q*2.4; if(Math.random()<rate*dt*speed*1.5 || drops.length===0){
-      const conc=clamp(F.liq.reduce((a,b)=>a+b,0)/(F.free+F.abs+1)*6,0,1);
-      drops.push({x:g.cx+(Math.random()-0.5)*2,y:g.baseY+38,v:40,c:liquor(F.liq,conc)});
-    }
-  }
-  // ripples from pour
-  if(F.pouring && Math.random()<dt*9*speed){ const ip=impactPoint(F,now); ripples.push({x:ip[0],y:ip[1],age:0,life:0.8}); }
-}
-function impactPoint(F,now){
-  const g=geom, h=F.surfH, w=(g.w(h)-2)*0.5, ph=now/1000*2.6;
-  return [g.cx+Math.cos(ph)*w, g.baseY-h+Math.sin(ph)*w*0.3];
-}
-function stepFx(dt,F){
-  const surfY=geom.baseY-F.surfH;
-  wisps=wisps.filter(w=>(w.age+=dt)<w.life);
-  for(const w of wisps){ w.x+=w.vx*dt; w.y+=(w.vy + F.q*9)*dt; }
-  bubbles=bubbles.filter(b=>{ b.y+=b.v*dt*0.6; b.life-=dt; return b.life>0 && b.y<F.surfH+1; });
-  const sy=serverSurfaceY(F);
-  drops=drops.filter(d=>{ d.v+=520*dt; d.y+=d.v*dt; return d.y<sy; });
-  ripples=ripples.filter(r=>(r.age+=dt)<r.life);
-  if(wisps.length>260) wisps.splice(0,wisps.length-260);
-  if(bubbles.length>120) bubbles.splice(0,bubbles.length-120);
-}
-function drawFx(F){
-  for(const w of wisps){ const a=Math.sin(Math.PI*w.age/w.life);
-    ctx.beginPath(); ctx.arc(w.x,w.y,w.r*(1+w.age),0,Math.PI*2); ctx.fillStyle=rgba(CRGB[w.c],0.55*a); ctx.fill(); }
-  for(const b of bubbles){ const [x,y]=proj(b.r,b.th,b.y);
-    ctx.beginPath(); ctx.arc(x,y,b.rad,0,Math.PI*2); ctx.strokeStyle='rgba(255,255,255,.75)'; ctx.lineWidth=0.8; ctx.stroke(); }
-}
-
-// ---------- server ----------
-const SV={top:0,bot:494,rxT:80,rxB:86,cap:330};
-function serverSurfaceY(F){ const hMax=SV.bot-SV.top-18; return SV.bot-6-hMax*clamp(F.drained/SV.cap,0,1); }
-function drawServer(F){
-  SV.top=geom.baseY+36;
-  const cx=geom.cx, top=SV.top, bot=SV.bot, rxT=SV.rxT, rxB=SV.rxB;
-  // back glass
-  ctx.beginPath(); ctx.ellipse(cx,top,rxT,9,0,Math.PI,2*Math.PI); ctx.strokeStyle=rgba(hex('#8fb0bd'),0.7); ctx.lineWidth=1.2; ctx.stroke();
-  // liquid layers
-  const sy=serverSurfaceY(F);
-  if(F.drained>0.3){
-    const layers=[]; let acc=0;
-    R.steps.forEach((st,i)=>{ if(i<F.si){ layers.push({m:st.dDrained,c:st.dCup}); } });
-    const curM=F.drained-F.st.drained0, curC=F.cup.map((v,i)=>v-F.st.cup0[i]);
-    if(curM>0.01) layers.push({m:curM,c:curC});
-    const total=layers.reduce((a,l)=>a+l.m,0)||1;
-    const lg=ctx.createLinearGradient(0,bot,0,sy);
-    layers.forEach(l=>{ const conc=clamp(l.c.reduce((a,b)=>a+b,0)/Math.max(1,l.m)*9,0,1); const col=liquor(l.c,conc);
-      const mid=(acc+l.m/2)/total; lg.addColorStop(clamp(mid,0,1),rgba(col,0.92)); acc+=l.m; });
-    ctx.beginPath(); ctx.moveTo(cx-rxB+2,bot-12); 
-    const wAt=y=>rxB-2-(rxB-rxT)*(bot-y)/(bot-top);
-    ctx.lineTo(cx-wAt(sy),sy); ctx.ellipse(cx,sy,wAt(sy),7,0,Math.PI,0,true); ctx.lineTo(cx+rxB-2,bot-12);
-    ctx.quadraticCurveTo(cx+rxB-2,bot,cx+rxB-16,bot); ctx.lineTo(cx-rxB+16,bot); ctx.quadraticCurveTo(cx-rxB+2,bot,cx-rxB+2,bot-12);
-    ctx.fillStyle=lg; ctx.fill();
-    const topCol=layers.length? liquor(layers[layers.length-1].c, 0.8):[120,80,50];
-    ctx.beginPath(); ctx.ellipse(cx,sy,wAt(sy),7,0,0,Math.PI*2); ctx.fillStyle=rgba(mix(topCol,[255,255,255],0.12),0.95); ctx.fill();
-    // layer labels
-    if(layers.length>1){ ctx.font='500 9.5px "Chakra Petch", sans-serif'; ctx.fillStyle=ink; ctx.textAlign='left'; let a2=0;
-      layers.forEach((l,i)=>{ const yMid=bot-6-(bot-top-18)*((a2+l.m/2)/SV.cap); a2+=l.m; if(l.m>12) { ctx.globalAlpha=0.7; ctx.fillText(stepShort(i), cx+rxB+6, yMid+3); ctx.globalAlpha=1; } }); }
-  }
-  // glass body
-  ctx.beginPath(); ctx.moveTo(cx-rxT,top); ctx.lineTo(cx-rxB,bot-14); ctx.quadraticCurveTo(cx-rxB,bot+1,cx-rxB+16,bot+1); ctx.lineTo(cx+rxB-16,bot+1); ctx.quadraticCurveTo(cx+rxB,bot+1,cx+rxB,bot-14); ctx.lineTo(cx+rxT,top);
-  ctx.strokeStyle=rgba(hex('#8fb0bd'),0.9); ctx.lineWidth=1.6; ctx.stroke();
-  ctx.fillStyle='rgba(180,215,228,.10)'; ctx.fill();
-  ctx.beginPath(); ctx.ellipse(cx,top,rxT,9,0,0,Math.PI); ctx.stroke();
-  // highlight
-  ctx.beginPath(); ctx.moveTo(cx-rxT+10,top+14); ctx.lineTo(cx-rxB+12,bot-24); ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=3; ctx.stroke();
-  // scale ticks
-  ctx.font='500 9px "Chakra Petch", sans-serif'; ctx.fillStyle=muted; ctx.textAlign='right'; ctx.strokeStyle=rgba(hex('#8fb0bd'),0.6); ctx.lineWidth=1;
-  for(const m of [100,200,300]){ const y=bot-6-(bot-top-18)*m/SV.cap; ctx.beginPath(); ctx.moveTo(cx-rxB+4,y); ctx.lineTo(cx-rxB+12,y); ctx.stroke(); ctx.fillText(m,cx-rxB-4,y+3); }
-}
-function drawDrops(F){
-  const sy=serverSurfaceY(F);
-  if(F.q>1.6 && F.valveOpen){ const conc=clamp(F.liq.reduce((a,b)=>a+b,0)/(F.free+F.abs+1)*6,0,1); const col=liquor(F.liq,conc);
-    ctx.beginPath(); ctx.moveTo(geom.cx,geom.baseY+37); ctx.lineTo(geom.cx,sy); ctx.strokeStyle=rgba(col,0.85); ctx.lineWidth=clamp(F.q*0.55,1,2.6); ctx.stroke(); }
-  for(const d of drops){ ctx.beginPath(); ctx.ellipse(d.x,d.y,1.8,2.8,0,0,Math.PI*2); ctx.fillStyle=rgba(d.c,0.95); ctx.fill(); }
-}
-
-// ---------- kettle ----------
-function drawKettle(F,now){
-  const g=geom; const tipX=g.cx+Math.max(g.w(g.H)+g.t+40,140), tipY=g.rimY-62;
-  ctx.strokeStyle=rgba(hex('#9aa3a2'),F.pouring?1:0.35); ctx.lineWidth=5; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(VW+20,tipY+70); ctx.bezierCurveTo(tipX+90,tipY+60,tipX+50,tipY-30,tipX,tipY); ctx.stroke();
-  ctx.lineCap='butt';
-  if(F.pouring){
-    const [ix,iy]=impactPoint(F,now);
-    ctx.beginPath(); ctx.moveTo(tipX,tipY+1);
-    ctx.quadraticCurveTo(tipX-10,(tipY+iy)/2-10,ix,iy);
-    ctx.strokeStyle='rgba(150,200,228,.95)'; ctx.lineWidth=F.st.kind==='bloom'?1.8:2.6; ctx.stroke();
-    ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=0.8; ctx.stroke();
-  }
-}
-
-// annotations
-function drawNotes(F){
-  ctx.font='500 10.5px "Anuphan", sans-serif'; ctx.fillStyle=ink; ctx.textAlign='right';
-  const g=geom;
-  if(F.mig>0.18){ const y=g.baseY-6, x=g.cx-g.w(6)-g.t-8; ctx.globalAlpha=clamp(F.mig*1.6,0,1);
-    ctx.beginPath(); ctx.moveTo(x-2,y-4); ctx.lineTo(g.cx-g.w(4)+2,y-3); ctx.strokeStyle=ink; ctx.lineWidth=0.8; ctx.stroke();
-    ctx.fillText('fines อุดก้น', x-5, y-1); ctx.globalAlpha=1; }
-  if(F.dome>0.2){ const y=g.baseY-F.surfH-4, x=g.cx-g.w(g.H)-g.t-6; ctx.globalAlpha=clamp(F.dome,0,1); ctx.fillText('CO₂ ออก · โดมบลูม', x, y); ctx.globalAlpha=1; }
-}
 
 let last=performance.now(), hudT=0;
 function loop(now){
@@ -449,23 +85,15 @@ function loop(now){
     const F=frameAt(step,clamp(progress,0,1));
     const simDt = playing ? dtR*speed : dtR*0.4;
     updateParticles(F, reduceMotion? dtR*0.3 : simDt*1.2);
-    spawnFx(F,playing?dtR:0,now); stepFx(dtR*(playing?speed:0.5),F);
+    spawnFx(F,playing?dtR:0,now,speed); stepFx(dtR*(playing?speed:0.5),F);
     draw(F,now);
     if(now-hudT>90){ hud(F); hudT=now; }
   }
   requestAnimationFrame(loop);
 }
 function animDur(si){ const st=R.steps[si]; return clamp((st.t1-st.t0)/3.5,8,26); }
-function draw(F,now){
-  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.setTransform(dpr*sc,0,0,dpr*sc,dpr*ox,dpr*oy);
-  drawServer(F); drawDrops(F);
-  drawDripperBack(F); drawWaterBody(F); drawParticles(F); drawFx(F); drawWaterSurface(F,now);
-  drawDripperFront(F); drawKettle(F,now); drawNotes(F);
-}
 
 // ---------- text ----------
-function stepShort(i){ const st=R.steps[i]; if(!st) return ''; if(st.kind==='bloom') return 'Bloom'; if(st.kind==='single') return 'เทครั้งเดียว'; if(st.kind==='drawdown') return 'Drawdown'; return 'เท '+(st.i+1); }
 function topNames(arr,k=2){ const s=shares(arr); return s.map((v,i)=>({v,i})).sort((a,b)=>b.v-a.v).slice(0,k).filter(o=>o.v>0.08).map(o=>COMP[o.i].th); }
 function agitWord(a){ return a<0.55?'เบา':a<0.85?'ปานกลาง':'แรง'; }
 function narrate(si){
@@ -595,7 +223,7 @@ function renderControls(){
 }
 
 function rebuild(){
-  R=simulate(state); geom=makeGeom(); genParticles();
+  R=simulate(state); load(R,state);
   step=0; progress=0; playing=!reduceMotion; playAll=false; lastCupKey='';
   renderControls(); renderTimeline(); renderResult(); renderRecipe(); onStep(true); updatePlay();
 }
