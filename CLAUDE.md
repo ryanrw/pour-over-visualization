@@ -15,7 +15,7 @@ Static web app (no build step) showing a 2.5D cutaway of a pour-over dripper fro
   - `COMP`: 5 compounds with rate `k`, temp sensitivity `sens`, soluble mass `S`, color.
   - `PERC`: perceived-intensity weights used for taste shares.
   - `DRIPPERS`, `FILTERS`, `GRIND`, `PROCESS`: config tables (geometry, flow factors, availability `A`, recommended temp).
-  - `simulate(cfg)`: 0.5 s ticks. Tracks free water, absorbed water (2× dose), agitation, fines migration (clogs flow), first-order extraction per compound for main particles and fines, and mass balance of dissolved solids → cup. Returns `steps` (bloom / pour / drawdown) and `frames`.
+  - `simulate(cfg)`: 0.5 s ticks. Tracks free water, absorbed water (up to 2× dose, soaked up at `ABSORB_RATE` slowing as the bed saturates, so some water drips through during bloom), agitation, fines migration (clogs flow), first-order extraction per compound for main particles and fines, and mass balance of dissolved solids → cup. Returns `steps` (bloom / pour / drawdown) and `frames`.
   - `shares(arr)`: perceived taste share.
 - `src/render.js`: canvas drawing. Owns render state (`R`, `geom`, particles, effects); `load(R, cfg)` rebuilds geometry and particles for a new result. Also exports colour helpers (`mix`, `rgba`, `clamp`, `hueOf`) and `stepShort`.
   - Virtual scene 470×520, scaled to the `.viz` box. Cone geometry `geom.w(y)`, volume→height lookup `volToH`.
@@ -47,9 +47,9 @@ Static web app (no build step) showing a 2.5D cutaway of a pour-over dripper fro
 
 ## Testing
 - Reference configs (default = V60 dripper, V60 filter, 3 pours, medium, 90 °C, bloom 2×, 1:15, natural):
-  - default → EY ~19%, total time ~2:30
+  - default → EY ~18.6%, total time ~2:30, ~7 g drips through during bloom
   - default + fine grind + 94 °C → EY ~22–23%, astringent/burnt shares go up
-  - default + coarse grind + 86 °C → EY ~14%, sour-led
+  - default + coarse grind + 86 °C → EY ~13.5%, sour-led
   - Hario Switch → valve closed through bloom (45 s), no drain during bloom. With bloom 2× the bloom step ends at exactly 45 s (all water absorbed); with a bigger bloom it runs longer while the excess drains.
   - ratio 1:5 → low EY (high TDS); pours = 1 → single step + drawdown
 - `test/sim.test.js` (`node --test`) checks the reference configs, mass-balance invariants, and golden numbers for 18 configs. Golden values lock exact output: if a model change is intended, update them and state which numbers moved and why.

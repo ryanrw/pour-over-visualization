@@ -1,5 +1,8 @@
 // Pure simulation: no DOM. Imported by the page and by test/sim.test.js.
 export const DOSE = 15;
+// Dry grounds soak up water at up to this rate (g/s), slowing as the bed saturates.
+// Slower than the pour, so some water channels through and drips during bloom.
+export const ABSORB_RATE = 4;
 export const COMP = [
   {id:'sour',   th:'เปรี้ยว', color:'#E6C229', k:0.034,  sens:0.15, S:4.5},
   {id:'sweet',  th:'หวาน',   color:'#EC8A34', k:0.0115, sens:0.45, S:13},
@@ -58,7 +61,7 @@ export function simulate(cfg){
   }
   function tick(add,agitTarget,valveOpen,immersion){
     S.free+=add; S.poured+=add;
-    const ab=Math.min(S.free, absorbCap-S.abs, 7*dt); S.abs+=ab; S.free-=ab;
+    const ab=Math.min(S.free, absorbCap-S.abs, ABSORB_RATE*dt*(1-S.abs/absorbCap)); S.abs+=ab; S.free-=ab;
     if(add>0) S.agit += (agitTarget-S.agit)*0.45; else S.agit *= Math.exp(-dt/4.5);
     S.mig = Math.min(1, S.mig + S.agit*dt*0.0065*(valveOpen?1:0.3)*Math.sqrt(G.finesFrac/0.18));
     const clog = 1 - S.mig*(0.2+G.finesFrac*0.9);
